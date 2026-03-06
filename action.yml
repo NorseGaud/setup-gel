@@ -35,6 +35,12 @@ inputs:
     description: >
       If set, specifies the directory with gel.toml project manifest.
     default: ''
+  skip-project-init:
+    required: false
+    description: >
+      If true, skip automatic `gel project init` even when a project manifest
+      (`gel.toml` or `edgedb.toml`) exists.
+    default: 'false'
 runs:
   using: 'node20'
   main: 'dist/index.js'

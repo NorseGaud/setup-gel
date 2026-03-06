@@ -123,3 +123,21 @@ jobs:
           instance-name: ci_gel_instance
       - run: gel query "SELECT 'Hello from GitHub Actions'"
 ```
+
+Example (installs CLI and server but skips automatic `gel project init` even if
+`gel.toml` or `edgedb.toml` exists)
+
+```yaml
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: CI with Gel action
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geldata/setup-gel@v1
+        with:
+          skip-project-init: true
+      - run: gel --version
+```

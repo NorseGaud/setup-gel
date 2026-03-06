@@ -15,6 +15,7 @@ const PKG_IDX = `${PKG_ROOT}/archive/.jsonindexes`
 
 export async function run(): Promise<void> {
   const cliVersion = core.getInput('cli-version')
+  const shouldSkipProjectInit = core.getBooleanInput('skip-project-init')
 
   let serverVersion: string | null = core.getInput('server-version')
   if (serverVersion === '' || serverVersion === 'none') {
@@ -41,7 +42,12 @@ export async function run(): Promise<void> {
 
     if (serverDsn) {
       core.addPath(cliPath)
-      await linkInstance(serverDsn, instanceName, projectDir)
+      await linkInstance(
+        serverDsn,
+        instanceName,
+        projectDir,
+        shouldSkipProjectInit
+      )
     } else if (serverVersion) {
       const serverPath = await installServer(serverVersion, cliPath)
       core.addPath(serverPath)
@@ -49,7 +55,12 @@ export async function run(): Promise<void> {
       core.addPath(cliPath)
 
       const runstateDir = generateRunstateDir()
-      if (hasProjectFile(projectDir)) {
+      if (shouldSkipProjectInit) {
+        if (instanceName) {
+          await createNamedInstance(instanceName, serverVersion, runstateDir)
+          core.setOutput('runstate-dir', runstateDir)
+        }
+      } else if (hasProjectFile(projectDir)) {
         await initProject(projectDir, instanceName, serverVersion, runstateDir)
         core.setOutput('runstate-dir', runstateDir)
       } else if (instanceName) {
@@ -247,7 +258,8 @@ export function getBaseDist(arch: string, platform: string, libc = ''): string {
 async function linkInstance(
   dsn: string,
   instanceName: string | null,
-  projectDir: string | null
+  projectDir: string | null,
+  shouldSkipProjectInit: boolean
 ): Promise<void> {
   instanceName = instanceName || generateInstanceName()
 
@@ -276,7 +288,7 @@ async function linkInstance(
   core.debug(`Running ${cli} ${instanceLinkCmdLine.join(' ')}`)
   await exec.exec(cli, instanceLinkCmdLine, options)
 
-  if (hasProjectFile(projectDir)) {
+  if (!shouldSkipProjectInit && hasProjectFile(projectDir)) {
     const projectLinkCmdLine = [
       'project',
       'init',

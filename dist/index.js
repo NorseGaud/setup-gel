@@ -39704,6 +39704,7 @@ const PKG_ROOT = 'https://packages.geldata.com';
 const PKG_IDX = `${PKG_ROOT}/archive/.jsonindexes`;
 async function run$1() {
     const cliVersion = coreExports.getInput('cli-version');
+    const shouldSkipProjectInit = coreExports.getBooleanInput('skip-project-init');
     let serverVersion = coreExports.getInput('server-version');
     if (serverVersion === '' || serverVersion === 'none') {
         serverVersion = null;
@@ -39724,14 +39725,20 @@ async function run$1() {
         const cliPath = await installCLI$1(cliVersion);
         if (serverDsn) {
             coreExports.addPath(cliPath);
-            await linkInstance(serverDsn, instanceName, projectDir);
+            await linkInstance(serverDsn, instanceName, projectDir, shouldSkipProjectInit);
         }
         else if (serverVersion) {
             const serverPath = await installServer$1(serverVersion, cliPath);
             coreExports.addPath(serverPath);
             coreExports.addPath(cliPath);
             const runstateDir = generateRunstateDir();
-            if (hasProjectFile(projectDir)) {
+            if (shouldSkipProjectInit) {
+                if (instanceName) {
+                    await createNamedInstance(instanceName, serverVersion, runstateDir);
+                    coreExports.setOutput('runstate-dir', runstateDir);
+                }
+            }
+            else if (hasProjectFile(projectDir)) {
                 await initProject(projectDir, instanceName, serverVersion, runstateDir);
                 coreExports.setOutput('runstate-dir', runstateDir);
             }
@@ -39882,7 +39889,7 @@ function getBaseDist$1(arch, platform, libc = '') {
     }
     return `${distArch}-${distPlatform}`;
 }
-async function linkInstance(dsn, instanceName, projectDir) {
+async function linkInstance(dsn, instanceName, projectDir, shouldSkipProjectInit) {
     instanceName = instanceName || generateInstanceName();
     const cli = 'gel';
     const options = {
@@ -39907,7 +39914,7 @@ async function linkInstance(dsn, instanceName, projectDir) {
     ];
     coreExports.debug(`Running ${cli} ${instanceLinkCmdLine.join(' ')}`);
     await execExports.exec(cli, instanceLinkCmdLine, options);
-    if (hasProjectFile(projectDir)) {
+    if (!shouldSkipProjectInit && hasProjectFile(projectDir)) {
         const projectLinkCmdLine = [
             'project',
             'init',

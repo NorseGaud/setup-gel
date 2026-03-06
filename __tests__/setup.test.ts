@@ -166,4 +166,57 @@ describe('setup-gel', () => {
     expect(core.addPath).toHaveBeenCalledWith(serverPath)
     expect(core.addPath).toHaveBeenCalledWith(cliPath)
   })
+
+  it('Skips project init when configured', async () => {
+    inputs['cli-version'] = '>=7.0.0 <=7.0.3'
+    inputs['server-version'] = 'stable'
+    inputs['skip-project-init'] = true
+
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gel-project-'))
+    fs.writeFileSync(path.join(projectDir, 'edgedb.toml'), '[edgedb]\n', {
+      flag: 'w'
+    })
+    inputs['project-dir'] = projectDir
+
+    const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'gel-setup-'))
+    let tmp = path.join(tmpdir, 'foo')
+    fs.writeFileSync(tmp, '', { flag: 'w' })
+    tmp = fs.realpathSync(tmp)
+
+    tc.downloadTool.mockImplementation(async () => tmp)
+    tc.find.mockImplementation(() => '')
+    exec.exec.mockImplementation(async (cmd, args, opts) => {
+      if (args && args[0] === 'server' && args[1] === 'install') {
+        return 0
+      } else if (
+        args &&
+        args[0] === 'server' &&
+        args[1] === 'info' &&
+        args[2] === '--bin-path'
+      ) {
+        if (opts?.listeners?.stdout) {
+          opts.listeners.stdout(Buffer.from(tmp))
+        }
+        return 0
+      } else {
+        return 0
+      }
+    })
+
+    const cliPath = path.normalize('/cache/gel/7.0.3')
+    tc.cacheDir.mockImplementation(async () => cliPath)
+
+    await main.run()
+
+    const projectInitCallCount = exec.exec.mock.calls.filter(([, args]) =>
+      Array.isArray(args) &&
+      args.length > 1 &&
+      args[0] === 'project' &&
+      args[1] === 'init'
+    ).length
+    expect(projectInitCallCount).toBe(0)
+
+    fs.rmdirSync(projectDir, { recursive: true })
+    fs.rmdirSync(tmpdir, { recursive: true })
+  })
 })
