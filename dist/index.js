@@ -39704,6 +39704,7 @@ const PKG_ROOT = 'https://packages.geldata.com';
 const PKG_IDX = `${PKG_ROOT}/archive/.jsonindexes`;
 async function run$1() {
     const cliVersion = coreExports.getInput('cli-version');
+    const verboseLoggingEnabled = coreExports.getBooleanInput('verbose');
     let serverVersion = coreExports.getInput('server-version');
     if (serverVersion === '' || serverVersion === 'none') {
         serverVersion = null;
@@ -39724,19 +39725,19 @@ async function run$1() {
         const cliPath = await installCLI$1(cliVersion);
         if (serverDsn) {
             coreExports.addPath(cliPath);
-            await linkInstance(serverDsn, instanceName, projectDir);
+            await linkInstance(serverDsn, instanceName, projectDir, verboseLoggingEnabled);
         }
         else if (serverVersion) {
-            const serverPath = await installServer$1(serverVersion, cliPath);
+            const serverPath = await installServer$1(serverVersion, cliPath, verboseLoggingEnabled);
             coreExports.addPath(serverPath);
             coreExports.addPath(cliPath);
             const runstateDir = generateRunstateDir();
             if (hasProjectFile(projectDir)) {
-                await initProject(projectDir, instanceName, serverVersion, runstateDir);
+                await initProject(projectDir, instanceName, serverVersion, runstateDir, verboseLoggingEnabled);
                 coreExports.setOutput('runstate-dir', runstateDir);
             }
             else if (instanceName) {
-                await createNamedInstance(instanceName, serverVersion, runstateDir);
+                await createNamedInstance(instanceName, serverVersion, runstateDir, verboseLoggingEnabled);
                 coreExports.setOutput('runstate-dir', runstateDir);
             }
         }
@@ -39749,18 +39750,41 @@ async function run$1() {
         coreExports.setFailed(error.message);
     }
 }
-async function installServer$1(requestedVersion, cliPath) {
-    const options = {
+function logOutputChunk(outputChunk, verboseLoggingEnabled, verboseLogger) {
+    const outputLines = outputChunk.toString().split(/\r?\n/);
+    for (const outputLine of outputLines) {
+        const normalizedOutputLine = outputLine.trim();
+        if (normalizedOutputLine === '') {
+            continue;
+        }
+        if (verboseLoggingEnabled) {
+            verboseLogger(normalizedOutputLine);
+        }
+        else {
+            coreExports.debug(normalizedOutputLine);
+        }
+    }
+}
+function getExecOptions({ verboseLoggingEnabled, env, captureStdout }) {
+    return {
         silent: true,
+        env,
         listeners: {
             stdout: (data) => {
-                coreExports.debug(data.toString().trim());
+                const outputChunk = data.toString();
+                if (captureStdout) {
+                    captureStdout(outputChunk);
+                }
+                logOutputChunk(outputChunk, verboseLoggingEnabled, coreExports.info);
             },
             stderr: (data) => {
-                coreExports.debug(data.toString().trim());
+                logOutputChunk(data, verboseLoggingEnabled, coreExports.warning);
             }
         }
     };
+}
+async function installServer$1(requestedVersion, cliPath, verboseLoggingEnabled) {
+    const options = getExecOptions({ verboseLoggingEnabled });
     const cmdline = [];
     const cli = path.join(cliPath, 'gel');
     if (requestedVersion === 'nightly') {
@@ -39774,23 +39798,19 @@ async function installServer$1(requestedVersion, cliPath) {
     coreExports.debug(`Running ${cli} ${installCmdline.join(' ')}`);
     await execExports.exec(cli, installCmdline, options);
     let serverBinPath = '';
-    const infoOptions = {
-        silent: true,
-        listeners: {
-            stdout: (data) => {
-                serverBinPath = data.toString().trim();
-            },
-            stderr: (data) => {
-                coreExports.debug(data.toString().trim());
-            }
+    const infoOptions = getExecOptions({
+        verboseLoggingEnabled,
+        captureStdout: (outputChunk) => {
+            serverBinPath += outputChunk;
         }
-    };
+    });
     if (cmdline.length === 0) {
         cmdline.push('--latest');
     }
     const infoCmdline = ['server', 'info', '--bin-path'].concat(cmdline);
     coreExports.debug(`Running ${cli} ${infoCmdline.join(' ')}`);
     await execExports.exec(cli, infoCmdline, infoOptions);
+    serverBinPath = serverBinPath.trim();
     serverBinPath = fs.realpathSync(serverBinPath);
     return path.dirname(serverBinPath);
 }
@@ -39882,20 +39902,10 @@ function getBaseDist$1(arch, platform, libc = '') {
     }
     return `${distArch}-${distPlatform}`;
 }
-async function linkInstance(dsn, instanceName, projectDir) {
+async function linkInstance(dsn, instanceName, projectDir, verboseLoggingEnabled) {
     instanceName = instanceName || generateInstanceName();
     const cli = 'gel';
-    const options = {
-        silent: true,
-        listeners: {
-            stdout: (data) => {
-                coreExports.debug(data.toString().trim());
-            },
-            stderr: (data) => {
-                coreExports.debug(data.toString().trim());
-            }
-        }
-    };
+    const options = getExecOptions({ verboseLoggingEnabled });
     const instanceLinkCmdLine = [
         'instance',
         'link',
@@ -39923,23 +39933,15 @@ async function linkInstance(dsn, instanceName, projectDir) {
         await execExports.exec(cli, projectLinkCmdLine, options);
     }
 }
-async function initProject(projectDir, instanceName, serverVersion, runstateDir) {
+async function initProject(projectDir, instanceName, serverVersion, runstateDir, verboseLoggingEnabled) {
     instanceName = instanceName || generateInstanceName();
     const cli = 'gel';
-    const options = {
-        silent: true,
+    const options = getExecOptions({
+        verboseLoggingEnabled,
         env: {
             XDG_RUNTIME_DIR: runstateDir
-        },
-        listeners: {
-            stdout: (data) => {
-                coreExports.debug(data.toString().trim());
-            },
-            stderr: (data) => {
-                coreExports.debug(data.toString().trim());
-            }
         }
-    };
+    });
     const cmdOptionsLine = [
         '--non-interactive',
         '--server-instance',
@@ -39954,24 +39956,16 @@ async function initProject(projectDir, instanceName, serverVersion, runstateDir)
     const cmdLine = ['project', 'init'].concat(cmdOptionsLine);
     coreExports.debug(`Running ${cli} ${cmdLine.join(' ')}`);
     await execExports.exec(cli, cmdLine, options);
-    await startInstance(instanceName, runstateDir);
+    await startInstance(instanceName, runstateDir, verboseLoggingEnabled);
 }
-async function createNamedInstance(instanceName, serverVersion, runstateDir) {
+async function createNamedInstance(instanceName, serverVersion, runstateDir, verboseLoggingEnabled) {
     const cli = 'gel';
-    const options = {
-        silent: true,
+    const options = getExecOptions({
+        verboseLoggingEnabled,
         env: {
             XDG_RUNTIME_DIR: runstateDir
-        },
-        listeners: {
-            stdout: (data) => {
-                coreExports.debug(data.toString().trim());
-            },
-            stderr: (data) => {
-                coreExports.debug(data.toString().trim());
-            }
         }
-    };
+    });
     const cmdOptionsLine = [];
     if (serverVersion === 'nightly') {
         cmdOptionsLine.push('--nightly');
@@ -39982,9 +39976,9 @@ async function createNamedInstance(instanceName, serverVersion, runstateDir) {
     const cmdLine = ['instance', 'create', instanceName].concat(cmdOptionsLine);
     coreExports.debug(`Running ${cli} ${cmdLine.join(' ')}`);
     await execExports.exec(cli, cmdLine, options);
-    await startInstance(instanceName, runstateDir);
+    await startInstance(instanceName, runstateDir, verboseLoggingEnabled);
 }
-async function startInstance(instanceName, runstateDir) {
+async function startInstance(instanceName, runstateDir, verboseLoggingEnabled) {
     const cli = 'gel';
     const options = {
         env: {
@@ -39992,7 +39986,13 @@ async function startInstance(instanceName, runstateDir) {
         }
     };
     const cmdLine = ['instance', 'start', '--foreground', instanceName];
-    coreExports.debug(`Running ${cli} ${cmdLine.join(' ')} in background`);
+    const startMessage = `Running ${cli} ${cmdLine.join(' ')} in background`;
+    if (verboseLoggingEnabled) {
+        coreExports.info(startMessage);
+    }
+    else {
+        coreExports.debug(startMessage);
+    }
     await backgroundExec(cli, cmdLine, options);
 }
 function hasProjectFile(projectDir) {
@@ -40035,37 +40035,58 @@ async function backgroundExec(command, args, options) {
 }
 
 async function run() {
+    const verboseLoggingEnabled = coreExports.getBooleanInput('verbose');
     try {
-        await installCLI();
-        await installServer();
+        await installCLI(verboseLoggingEnabled);
+        await installServer(verboseLoggingEnabled);
     }
     catch (error) {
         coreExports.setFailed(error.message);
     }
 }
-async function checkOutput(cmd, args) {
+function logOutputLine(output, verboseLoggingEnabled, logger) {
+    const outputLines = output.toString().split(/\r?\n/);
+    for (const outputLine of outputLines) {
+        const normalizedOutputLine = outputLine.trim();
+        if (normalizedOutputLine === '') {
+            continue;
+        }
+        if (verboseLoggingEnabled) {
+            logger(normalizedOutputLine);
+        }
+        else {
+            coreExports.debug(normalizedOutputLine);
+        }
+    }
+}
+async function checkOutput(cmd, args, verboseLoggingEnabled) {
     let out = '';
     const options = {
+        silent: true,
         listeners: {
             stdout: (data) => {
                 out += data.toString();
+                logOutputLine(data, verboseLoggingEnabled, coreExports.info);
+            },
+            stderr: (data) => {
+                logOutputLine(data, verboseLoggingEnabled, coreExports.warning);
             }
         }
     };
     await execExports.exec(cmd, args, options);
     return out.trim();
 }
-async function getBaseDist() {
+async function getBaseDist(verboseLoggingEnabled) {
     const arch = os.arch();
-    const platform = (await checkOutput('wsl uname')).toLocaleLowerCase();
+    const platform = (await checkOutput('wsl uname', undefined, verboseLoggingEnabled)).toLocaleLowerCase();
     return getBaseDist$1(arch, platform, 'musl');
 }
-async function installCLI() {
+async function installCLI(verboseLoggingEnabled) {
     const requestedCLIVersion = coreExports.getInput('cli-version');
     const arch = os.arch();
     const includeCliPrereleases = true;
     let cliVersionRange = '*';
-    let dist = await getBaseDist();
+    let dist = await getBaseDist(verboseLoggingEnabled);
     if (requestedCLIVersion === 'nightly') {
         dist += '.nightly';
     }
@@ -40077,18 +40098,12 @@ async function installCLI() {
     const cliPkg = versionMap.get(matchingVer);
     const downloadUrl = new URL(cliPkg.installref, PKG_ROOT).href;
     coreExports.info(`Downloading gel-cli ${matchingVer} - ${arch} from ${downloadUrl}`);
-    await checkOutput('wsl', [
-        'curl',
-        '--fail',
-        '--output',
-        '/usr/bin/gel',
-        downloadUrl
-    ]);
-    await checkOutput('wsl chmod +x /usr/bin/gel');
+    await checkOutput('wsl', ['curl', '--fail', '--output', '/usr/bin/gel', downloadUrl], verboseLoggingEnabled);
+    await checkOutput('wsl chmod +x /usr/bin/gel', undefined, verboseLoggingEnabled);
     // Compatibility
-    await checkOutput('wsl ln -s gel /usr/bin/edgedb');
+    await checkOutput('wsl ln -s gel /usr/bin/edgedb', undefined, verboseLoggingEnabled);
 }
-async function installServer() {
+async function installServer(verboseLoggingEnabled) {
     const requestedVersion = coreExports.getInput('server-version');
     const args = [];
     if (requestedVersion === 'nightly') {
@@ -40098,30 +40113,20 @@ async function installServer() {
         args.push('--version');
         args.push(requestedVersion);
     }
-    await checkOutput('wsl', ['gel', 'server', 'install'].concat(args));
+    await checkOutput('wsl', ['gel', 'server', 'install'].concat(args), verboseLoggingEnabled);
     if (args.length === 0) {
         args.push('--latest');
     }
-    const bin = (await checkOutput('wsl', ['gel', 'server', 'info', '--bin-path'].concat(args))).trim();
+    const bin = (await checkOutput('wsl', ['gel', 'server', 'info', '--bin-path'].concat(args), verboseLoggingEnabled)).trim();
     if (bin === '') {
         throw Error('could not find gel-server bin');
     }
     const instDir = path.dirname(path.dirname(bin));
     const binName = path.basename(bin);
-    await checkOutput('wsl', ['cp', '-a', instDir, '/opt/gel']);
-    await checkOutput('wsl', [
-        'ln',
-        '-s',
-        '/opt/gel/bin/' + binName,
-        '/usr/bin/' + binName
-    ]);
+    await checkOutput('wsl', ['cp', '-a', instDir, '/opt/gel'], verboseLoggingEnabled);
+    await checkOutput('wsl', ['ln', '-s', '/opt/gel/bin/' + binName, '/usr/bin/' + binName], verboseLoggingEnabled);
     if (binName != 'gel-server') {
-        await checkOutput('wsl', [
-            'ln',
-            '-s',
-            '/opt/gel/bin/' + binName,
-            '/usr/bin/gel-server'
-        ]);
+        await checkOutput('wsl', ['ln', '-s', '/opt/gel/bin/' + binName, '/usr/bin/gel-server'], verboseLoggingEnabled);
     }
 }
 

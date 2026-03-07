@@ -1,6 +1,5 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
-import { ExecOptions } from '@actions/exec/lib/interfaces'
 import * as io from '@actions/io'
 import * as cp from 'child_process'
 import * as tc from '@actions/tool-cache'
@@ -10,11 +9,14 @@ import * as os from 'os'
 import * as path from 'path'
 import * as semver from 'semver'
 
+type ExecOptions = NonNullable<Parameters<typeof exec.exec>[2]>
+
 export const PKG_ROOT = 'https://packages.geldata.com'
 const PKG_IDX = `${PKG_ROOT}/archive/.jsonindexes`
 
 export async function run(): Promise<void> {
   const cliVersion = core.getInput('cli-version')
+  const verboseLoggingEnabled = core.getBooleanInput('verbose')
 
   let serverVersion: string | null = core.getInput('server-version')
   if (serverVersion === '' || serverVersion === 'none') {
@@ -41,19 +43,39 @@ export async function run(): Promise<void> {
 
     if (serverDsn) {
       core.addPath(cliPath)
-      await linkInstance(serverDsn, instanceName, projectDir)
+      await linkInstance(
+        serverDsn,
+        instanceName,
+        projectDir,
+        verboseLoggingEnabled
+      )
     } else if (serverVersion) {
-      const serverPath = await installServer(serverVersion, cliPath)
+      const serverPath = await installServer(
+        serverVersion,
+        cliPath,
+        verboseLoggingEnabled
+      )
       core.addPath(serverPath)
 
       core.addPath(cliPath)
 
       const runstateDir = generateRunstateDir()
       if (hasProjectFile(projectDir)) {
-        await initProject(projectDir, instanceName, serverVersion, runstateDir)
+        await initProject(
+          projectDir,
+          instanceName,
+          serverVersion,
+          runstateDir,
+          verboseLoggingEnabled
+        )
         core.setOutput('runstate-dir', runstateDir)
       } else if (instanceName) {
-        await createNamedInstance(instanceName, serverVersion, runstateDir)
+        await createNamedInstance(
+          instanceName,
+          serverVersion,
+          runstateDir,
+          verboseLoggingEnabled
+        )
         core.setOutput('runstate-dir', runstateDir)
       }
     } else {
@@ -65,21 +87,61 @@ export async function run(): Promise<void> {
   }
 }
 
-async function installServer(
-  requestedVersion: string | null,
-  cliPath: string
-): Promise<string> {
-  const options: ExecOptions = {
+interface VerboseExecOptionsConfig {
+  verboseLoggingEnabled: boolean
+  env?: ExecOptions['env']
+  captureStdout?: (outputChunk: string) => void
+}
+
+function logOutputChunk(
+  outputChunk: string | Buffer,
+  verboseLoggingEnabled: boolean,
+  verboseLogger: (line: string) => void
+): void {
+  const outputLines = outputChunk.toString().split(/\r?\n/)
+  for (const outputLine of outputLines) {
+    const normalizedOutputLine = outputLine.trim()
+    if (normalizedOutputLine === '') {
+      continue
+    }
+
+    if (verboseLoggingEnabled) {
+      verboseLogger(normalizedOutputLine)
+    } else {
+      core.debug(normalizedOutputLine)
+    }
+  }
+}
+
+function getExecOptions({
+  verboseLoggingEnabled,
+  env,
+  captureStdout
+}: VerboseExecOptionsConfig): ExecOptions {
+  return {
     silent: true,
+    env,
     listeners: {
       stdout: (data: Buffer) => {
-        core.debug(data.toString().trim())
+        const outputChunk = data.toString()
+        if (captureStdout) {
+          captureStdout(outputChunk)
+        }
+        logOutputChunk(outputChunk, verboseLoggingEnabled, core.info)
       },
       stderr: (data: Buffer) => {
-        core.debug(data.toString().trim())
+        logOutputChunk(data, verboseLoggingEnabled, core.warning)
       }
     }
   }
+}
+
+async function installServer(
+  requestedVersion: string | null,
+  cliPath: string,
+  verboseLoggingEnabled: boolean
+): Promise<string> {
+  const options = getExecOptions({ verboseLoggingEnabled })
 
   const cmdline = []
   const cli = path.join(cliPath, 'gel')
@@ -97,17 +159,12 @@ async function installServer(
 
   let serverBinPath = ''
 
-  const infoOptions: ExecOptions = {
-    silent: true,
-    listeners: {
-      stdout: (data: Buffer) => {
-        serverBinPath = data.toString().trim()
-      },
-      stderr: (data: Buffer) => {
-        core.debug(data.toString().trim())
-      }
+  const infoOptions = getExecOptions({
+    verboseLoggingEnabled,
+    captureStdout: (outputChunk: string) => {
+      serverBinPath += outputChunk
     }
-  }
+  })
 
   if (cmdline.length === 0) {
     cmdline.push('--latest')
@@ -117,6 +174,7 @@ async function installServer(
   core.debug(`Running ${cli} ${infoCmdline.join(' ')}`)
   await exec.exec(cli, infoCmdline, infoOptions)
 
+  serverBinPath = serverBinPath.trim()
   serverBinPath = fs.realpathSync(serverBinPath)
   return path.dirname(serverBinPath)
 }
@@ -247,22 +305,13 @@ export function getBaseDist(arch: string, platform: string, libc = ''): string {
 async function linkInstance(
   dsn: string,
   instanceName: string | null,
-  projectDir: string | null
+  projectDir: string | null,
+  verboseLoggingEnabled: boolean
 ): Promise<void> {
   instanceName = instanceName || generateInstanceName()
 
   const cli = 'gel'
-  const options: ExecOptions = {
-    silent: true,
-    listeners: {
-      stdout: (data: Buffer) => {
-        core.debug(data.toString().trim())
-      },
-      stderr: (data: Buffer) => {
-        core.debug(data.toString().trim())
-      }
-    }
-  }
+  const options = getExecOptions({ verboseLoggingEnabled })
 
   const instanceLinkCmdLine = [
     'instance',
@@ -299,25 +348,18 @@ async function initProject(
   projectDir: string | null,
   instanceName: string | null,
   serverVersion: string,
-  runstateDir: string
+  runstateDir: string,
+  verboseLoggingEnabled: boolean
 ): Promise<void> {
   instanceName = instanceName || generateInstanceName()
 
   const cli = 'gel'
-  const options: ExecOptions = {
-    silent: true,
+  const options = getExecOptions({
+    verboseLoggingEnabled,
     env: {
       XDG_RUNTIME_DIR: runstateDir
-    },
-    listeners: {
-      stdout: (data: Buffer) => {
-        core.debug(data.toString().trim())
-      },
-      stderr: (data: Buffer) => {
-        core.debug(data.toString().trim())
-      }
     }
-  }
+  })
 
   const cmdOptionsLine = [
     '--non-interactive',
@@ -335,30 +377,23 @@ async function initProject(
   core.debug(`Running ${cli} ${cmdLine.join(' ')}`)
   await exec.exec(cli, cmdLine, options)
 
-  await startInstance(instanceName, runstateDir)
+  await startInstance(instanceName, runstateDir, verboseLoggingEnabled)
 }
 
 async function createNamedInstance(
   instanceName: string,
   serverVersion: string,
-  runstateDir: string
+  runstateDir: string,
+  verboseLoggingEnabled: boolean
 ): Promise<void> {
   const cli = 'gel'
 
-  const options: ExecOptions = {
-    silent: true,
+  const options = getExecOptions({
+    verboseLoggingEnabled,
     env: {
       XDG_RUNTIME_DIR: runstateDir
-    },
-    listeners: {
-      stdout: (data: Buffer) => {
-        core.debug(data.toString().trim())
-      },
-      stderr: (data: Buffer) => {
-        core.debug(data.toString().trim())
-      }
     }
-  }
+  })
 
   const cmdOptionsLine = []
   if (serverVersion === 'nightly') {
@@ -371,12 +406,13 @@ async function createNamedInstance(
   core.debug(`Running ${cli} ${cmdLine.join(' ')}`)
   await exec.exec(cli, cmdLine, options)
 
-  await startInstance(instanceName, runstateDir)
+  await startInstance(instanceName, runstateDir, verboseLoggingEnabled)
 }
 
 async function startInstance(
   instanceName: string,
-  runstateDir: string
+  runstateDir: string,
+  verboseLoggingEnabled: boolean
 ): Promise<void> {
   const cli = 'gel'
 
@@ -387,7 +423,12 @@ async function startInstance(
   }
 
   const cmdLine = ['instance', 'start', '--foreground', instanceName]
-  core.debug(`Running ${cli} ${cmdLine.join(' ')} in background`)
+  const startMessage = `Running ${cli} ${cmdLine.join(' ')} in background`
+  if (verboseLoggingEnabled) {
+    core.info(startMessage)
+  } else {
+    core.debug(startMessage)
+  }
   await backgroundExec(cli, cmdLine, options)
 }
 

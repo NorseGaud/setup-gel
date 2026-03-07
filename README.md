@@ -11,6 +11,15 @@ available in `PATH`.
 
 See [action.yml](action.yml) for the action's specification.
 
+When troubleshooting setup failures, enable verbose logs to print `gel`
+stdout/stderr directly in workflow output:
+
+```yaml
+- uses: geldata/setup-gel@v1
+  with:
+    verbose: true
+```
+
 How this action works:
 
 This action executes different commands depending on state of files in
@@ -122,4 +131,13 @@ jobs:
           server-version: 6.0
           instance-name: ci_gel_instance
       - run: gel query "SELECT 'Hello from GitHub Actions'"
+```
+
+---
+
+## Contributing
+
+```bash
+npm install
+npm run all
 ```

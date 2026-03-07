@@ -35,6 +35,12 @@ inputs:
     description: >
       If set, specifies the directory with gel.toml project manifest.
     default: ''
+  verbose:
+    required: false
+    description: >
+      If true, prints verbose stdout/stderr from `gel` commands to the action
+      log. Defaults to false.
+    default: 'false'
 runs:
   using: 'node20'
   main: 'dist/index.js'

@@ -5,21 +5,51 @@ import * as os from 'os'
 import * as path from 'path'
 
 export async function run(): Promise<void> {
+  const verboseLoggingEnabled = core.getBooleanInput('verbose')
   try {
-    await installCLI()
-    await installServer()
+    await installCLI(verboseLoggingEnabled)
+    await installServer(verboseLoggingEnabled)
   } catch (error) {
     core.setFailed((error as Error).message)
   }
 }
 
-async function checkOutput(cmd: string, args?: string[]): Promise<string> {
+function logOutputLine(
+  output: Buffer,
+  verboseLoggingEnabled: boolean,
+  logger: (line: string) => void
+): void {
+  const outputLines = output.toString().split(/\r?\n/)
+  for (const outputLine of outputLines) {
+    const normalizedOutputLine = outputLine.trim()
+    if (normalizedOutputLine === '') {
+      continue
+    }
+
+    if (verboseLoggingEnabled) {
+      logger(normalizedOutputLine)
+    } else {
+      core.debug(normalizedOutputLine)
+    }
+  }
+}
+
+async function checkOutput(
+  cmd: string,
+  args: string[] | undefined,
+  verboseLoggingEnabled: boolean
+): Promise<string> {
   let out = ''
 
   const options = {
+    silent: true,
     listeners: {
       stdout: (data: Buffer) => {
         out += data.toString()
+        logOutputLine(data, verboseLoggingEnabled, core.info)
+      },
+      stderr: (data: Buffer) => {
+        logOutputLine(data, verboseLoggingEnabled, core.warning)
       }
     }
   }
@@ -28,19 +58,21 @@ async function checkOutput(cmd: string, args?: string[]): Promise<string> {
   return out.trim()
 }
 
-async function getBaseDist(): Promise<string> {
+async function getBaseDist(verboseLoggingEnabled: boolean): Promise<string> {
   const arch = os.arch()
-  const platform = (await checkOutput('wsl uname')).toLocaleLowerCase()
+  const platform = (
+    await checkOutput('wsl uname', undefined, verboseLoggingEnabled)
+  ).toLocaleLowerCase()
 
   return main.getBaseDist(arch, platform, 'musl')
 }
 
-async function installCLI(): Promise<void> {
+async function installCLI(verboseLoggingEnabled: boolean): Promise<void> {
   const requestedCLIVersion = core.getInput('cli-version')
   const arch = os.arch()
   const includeCliPrereleases = true
   let cliVersionRange = '*'
-  let dist = await getBaseDist()
+  let dist = await getBaseDist(verboseLoggingEnabled)
 
   if (requestedCLIVersion === 'nightly') {
     dist += '.nightly'
@@ -60,19 +92,25 @@ async function installCLI(): Promise<void> {
 
   core.info(`Downloading gel-cli ${matchingVer} - ${arch} from ${downloadUrl}`)
 
-  await checkOutput('wsl', [
-    'curl',
-    '--fail',
-    '--output',
-    '/usr/bin/gel',
-    downloadUrl
-  ])
-  await checkOutput('wsl chmod +x /usr/bin/gel')
+  await checkOutput(
+    'wsl',
+    ['curl', '--fail', '--output', '/usr/bin/gel', downloadUrl],
+    verboseLoggingEnabled
+  )
+  await checkOutput(
+    'wsl chmod +x /usr/bin/gel',
+    undefined,
+    verboseLoggingEnabled
+  )
   // Compatibility
-  await checkOutput('wsl ln -s gel /usr/bin/edgedb')
+  await checkOutput(
+    'wsl ln -s gel /usr/bin/edgedb',
+    undefined,
+    verboseLoggingEnabled
+  )
 }
 
-async function installServer(): Promise<void> {
+async function installServer(verboseLoggingEnabled: boolean): Promise<void> {
   const requestedVersion = core.getInput('server-version')
 
   const args = []
@@ -84,7 +122,11 @@ async function installServer(): Promise<void> {
     args.push(requestedVersion)
   }
 
-  await checkOutput('wsl', ['gel', 'server', 'install'].concat(args))
+  await checkOutput(
+    'wsl',
+    ['gel', 'server', 'install'].concat(args),
+    verboseLoggingEnabled
+  )
 
   if (args.length === 0) {
     args.push('--latest')
@@ -92,7 +134,8 @@ async function installServer(): Promise<void> {
   const bin = (
     await checkOutput(
       'wsl',
-      ['gel', 'server', 'info', '--bin-path'].concat(args)
+      ['gel', 'server', 'info', '--bin-path'].concat(args),
+      verboseLoggingEnabled
     )
   ).trim()
 
@@ -103,21 +146,23 @@ async function installServer(): Promise<void> {
   const instDir = path.dirname(path.dirname(bin))
   const binName = path.basename(bin)
 
-  await checkOutput('wsl', ['cp', '-a', instDir, '/opt/gel'])
+  await checkOutput(
+    'wsl',
+    ['cp', '-a', instDir, '/opt/gel'],
+    verboseLoggingEnabled
+  )
 
-  await checkOutput('wsl', [
-    'ln',
-    '-s',
-    '/opt/gel/bin/' + binName,
-    '/usr/bin/' + binName
-  ])
+  await checkOutput(
+    'wsl',
+    ['ln', '-s', '/opt/gel/bin/' + binName, '/usr/bin/' + binName],
+    verboseLoggingEnabled
+  )
 
   if (binName != 'gel-server') {
-    await checkOutput('wsl', [
-      'ln',
-      '-s',
-      '/opt/gel/bin/' + binName,
-      '/usr/bin/gel-server'
-    ])
+    await checkOutput(
+      'wsl',
+      ['ln', '-s', '/opt/gel/bin/' + binName, '/usr/bin/gel-server'],
+      verboseLoggingEnabled
+    )
   }
 }
