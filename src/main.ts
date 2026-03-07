@@ -91,6 +91,7 @@ interface VerboseExecOptionsConfig {
   verboseLoggingEnabled: boolean
   env?: ExecOptions['env']
   captureStdout?: (outputChunk: string) => void
+  captureStderr?: (outputChunk: string) => void
 }
 
 function logOutputChunk(
@@ -116,7 +117,8 @@ function logOutputChunk(
 function getExecOptions({
   verboseLoggingEnabled,
   env,
-  captureStdout
+  captureStdout,
+  captureStderr
 }: VerboseExecOptionsConfig): ExecOptions {
   return {
     silent: true,
@@ -130,9 +132,45 @@ function getExecOptions({
         logOutputChunk(outputChunk, verboseLoggingEnabled, core.info)
       },
       stderr: (data: Buffer) => {
+        if (captureStderr) {
+          captureStderr(data.toString())
+        }
         logOutputChunk(data, verboseLoggingEnabled, core.warning)
       }
     }
+  }
+}
+
+function isProjectAlreadyInitializedError(commandOutput: string): boolean {
+  return /project is already initialized/i.test(commandOutput)
+}
+
+async function runProjectInitCommand(
+  cli: string,
+  commandLine: string[],
+  verboseLoggingEnabled: boolean,
+  env?: ExecOptions['env']
+): Promise<void> {
+  let commandOutput = ''
+  const options = getExecOptions({
+    verboseLoggingEnabled,
+    env,
+    captureStdout: (outputChunk: string) => {
+      commandOutput += outputChunk
+    },
+    captureStderr: (outputChunk: string) => {
+      commandOutput += outputChunk
+    }
+  })
+
+  try {
+    await exec.exec(cli, commandLine, options)
+  } catch (error) {
+    if (isProjectAlreadyInitializedError(commandOutput)) {
+      core.info('Project is already initialized; skipping project init.')
+      return
+    }
+    throw error
   }
 }
 
@@ -340,7 +378,7 @@ async function linkInstance(
     }
 
     core.debug(`Running ${cli} ${projectLinkCmdLine.join(' ')}`)
-    await exec.exec(cli, projectLinkCmdLine, options)
+    await runProjectInitCommand(cli, projectLinkCmdLine, verboseLoggingEnabled)
   }
 }
 
@@ -375,7 +413,7 @@ async function initProject(
 
   const cmdLine = ['project', 'init'].concat(cmdOptionsLine)
   core.debug(`Running ${cli} ${cmdLine.join(' ')}`)
-  await exec.exec(cli, cmdLine, options)
+  await runProjectInitCommand(cli, cmdLine, verboseLoggingEnabled, options.env)
 
   await startInstance(instanceName, runstateDir, verboseLoggingEnabled)
 }

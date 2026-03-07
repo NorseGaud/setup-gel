@@ -39765,7 +39765,7 @@ function logOutputChunk(outputChunk, verboseLoggingEnabled, verboseLogger) {
         }
     }
 }
-function getExecOptions({ verboseLoggingEnabled, env, captureStdout }) {
+function getExecOptions({ verboseLoggingEnabled, env, captureStdout, captureStderr }) {
     return {
         silent: true,
         env,
@@ -39778,10 +39778,39 @@ function getExecOptions({ verboseLoggingEnabled, env, captureStdout }) {
                 logOutputChunk(outputChunk, verboseLoggingEnabled, coreExports.info);
             },
             stderr: (data) => {
+                if (captureStderr) {
+                    captureStderr(data.toString());
+                }
                 logOutputChunk(data, verboseLoggingEnabled, coreExports.warning);
             }
         }
     };
+}
+function isProjectAlreadyInitializedError(commandOutput) {
+    return /project is already initialized/i.test(commandOutput);
+}
+async function runProjectInitCommand(cli, commandLine, verboseLoggingEnabled, env) {
+    let commandOutput = '';
+    const options = getExecOptions({
+        verboseLoggingEnabled,
+        env,
+        captureStdout: (outputChunk) => {
+            commandOutput += outputChunk;
+        },
+        captureStderr: (outputChunk) => {
+            commandOutput += outputChunk;
+        }
+    });
+    try {
+        await execExports.exec(cli, commandLine, options);
+    }
+    catch (error) {
+        if (isProjectAlreadyInitializedError(commandOutput)) {
+            coreExports.info('Project is already initialized; skipping project init.');
+            return;
+        }
+        throw error;
+    }
 }
 async function installServer$1(requestedVersion, cliPath, verboseLoggingEnabled) {
     const options = getExecOptions({ verboseLoggingEnabled });
@@ -39930,7 +39959,7 @@ async function linkInstance(dsn, instanceName, projectDir, verboseLoggingEnabled
             projectLinkCmdLine.push('--project-dir', projectDir);
         }
         coreExports.debug(`Running ${cli} ${projectLinkCmdLine.join(' ')}`);
-        await execExports.exec(cli, projectLinkCmdLine, options);
+        await runProjectInitCommand(cli, projectLinkCmdLine, verboseLoggingEnabled);
     }
 }
 async function initProject(projectDir, instanceName, serverVersion, runstateDir, verboseLoggingEnabled) {
@@ -39955,7 +39984,7 @@ async function initProject(projectDir, instanceName, serverVersion, runstateDir,
     }
     const cmdLine = ['project', 'init'].concat(cmdOptionsLine);
     coreExports.debug(`Running ${cli} ${cmdLine.join(' ')}`);
-    await execExports.exec(cli, cmdLine, options);
+    await runProjectInitCommand(cli, cmdLine, verboseLoggingEnabled, options.env);
     await startInstance(instanceName, runstateDir, verboseLoggingEnabled);
 }
 async function createNamedInstance(instanceName, serverVersion, runstateDir, verboseLoggingEnabled) {

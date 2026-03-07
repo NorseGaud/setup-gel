@@ -166,4 +166,67 @@ describe('setup-gel', () => {
     expect(core.addPath).toHaveBeenCalledWith(serverPath)
     expect(core.addPath).toHaveBeenCalledWith(cliPath)
   })
+
+  it('Skips project init when already initialized', async () => {
+    inputs['cli-version'] = '>=7.0.0 <=7.0.3'
+    inputs['server-dsn'] = 'gel://localhost:5656'
+    inputs['instance-name'] = 'ci_gel'
+
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gel-project-'))
+    fs.writeFileSync(path.join(projectDir, 'gel.toml'), '')
+    inputs['project-dir'] = projectDir
+
+    let libc = ''
+    if (os.platform() === 'linux') {
+      libc = 'musl'
+    }
+    const baseDist = main.getBaseDist(os.arch(), os.platform(), libc)
+    const pkgBase = `https://packages.geldata.com/archive/${baseDist}`
+    const expectedVer = '7.0.3\\+([0-9a-f]{7})'
+    const expectedUrl = `${pkgBase}/gel-cli-${expectedVer}`
+
+    const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'gel-setup-'))
+    let tmp = path.join(tmpdir, 'foo')
+    fs.writeFileSync(tmp, '', { flag: 'w' })
+    tmp = fs.realpathSync(tmp)
+
+    tc.downloadTool.mockImplementation(async () => tmp)
+    tc.find.mockImplementation(() => '')
+
+    const cliPath = path.normalize('/cache/gel/7.0.3')
+    tc.cacheFile.mockImplementation(async () => cliPath)
+    tc.cacheDir.mockImplementation(async () => cliPath)
+
+    exec.exec.mockImplementation(async (_cmd, args, opts) => {
+      if (args && args[0] === 'instance' && args[1] === 'link') {
+        return 0
+      }
+      if (args && args[0] === 'project' && args[1] === 'init') {
+        opts?.listeners?.stderr?.(
+          Buffer.from('gel error: Project is already initialized\n')
+        )
+        throw Error("The process 'gel' failed with exit code 1")
+      }
+      return 0
+    })
+
+    await main.run()
+
+    expect(tc.downloadTool).toHaveBeenCalled()
+    expect(core.info).toHaveBeenCalledWith(
+      expect.stringMatching(
+        new RegExp(
+          `Downloading gel-cli ${expectedVer} - ${os.arch()} from ${expectedUrl}`
+        )
+      )
+    )
+    expect(core.info).toHaveBeenCalledWith(
+      'Project is already initialized; skipping project init.'
+    )
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.addPath).toHaveBeenCalledWith(cliPath)
+
+    fs.rmSync(projectDir, { recursive: true, force: true })
+    fs.rmdirSync(tmpdir, { recursive: true })
+  })
 })
