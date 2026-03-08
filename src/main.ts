@@ -360,8 +360,15 @@ async function linkInstance(
     dsn,
     instanceName
   ]
+  const instanceLinkStepStartTime = Date.now()
+  core.info(`Starting instance link for '${instanceName}'...`)
   core.debug(`Running ${cli} ${instanceLinkCmdLine.join(' ')}`)
   await exec.exec(cli, instanceLinkCmdLine, options)
+  core.info(
+    `Instance link for '${instanceName}' completed in ${
+      Date.now() - instanceLinkStepStartTime
+    }ms.`
+  )
 
   if (hasProjectFile(projectDir)) {
     const projectLinkCmdLine = [

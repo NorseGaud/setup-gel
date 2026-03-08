@@ -39944,8 +39944,11 @@ async function linkInstance(dsn, instanceName, projectDir, verboseLoggingEnabled
         dsn,
         instanceName
     ];
+    const instanceLinkStepStartTime = Date.now();
+    coreExports.info(`Starting instance link for '${instanceName}'...`);
     coreExports.debug(`Running ${cli} ${instanceLinkCmdLine.join(' ')}`);
     await execExports.exec(cli, instanceLinkCmdLine, options);
+    coreExports.info(`Instance link for '${instanceName}' completed in ${Date.now() - instanceLinkStepStartTime}ms.`);
     if (hasProjectFile(projectDir)) {
         const projectLinkCmdLine = [
             'project',
