@@ -28,6 +28,14 @@ export async function run(): Promise<void> {
     serverDsn = null
   }
 
+  let serverPassword: string | null = core.getInput('server-password')
+  if (serverPassword === '') {
+    serverPassword = null
+  }
+  if (serverPassword !== null) {
+    core.setSecret(serverPassword)
+  }
+
   let instanceName: string | null = core.getInput('instance-name')
   if (instanceName === '') {
     instanceName = null
@@ -45,6 +53,7 @@ export async function run(): Promise<void> {
       core.addPath(cliPath)
       await linkInstance(
         serverDsn,
+        serverPassword,
         instanceName,
         projectDir,
         verboseLoggingEnabled
@@ -90,6 +99,7 @@ export async function run(): Promise<void> {
 interface VerboseExecOptionsConfig {
   verboseLoggingEnabled: boolean
   env?: ExecOptions['env']
+  input?: ExecOptions['input']
   captureStdout?: (outputChunk: string) => void
   captureStderr?: (outputChunk: string) => void
 }
@@ -117,12 +127,14 @@ function logOutputChunk(
 function getExecOptions({
   verboseLoggingEnabled,
   env,
+  input,
   captureStdout,
   captureStderr
 }: VerboseExecOptionsConfig): ExecOptions {
   return {
     silent: true,
     env,
+    input,
     listeners: {
       stdout: (data: Buffer) => {
         const outputChunk = data.toString()
@@ -342,6 +354,7 @@ export function getBaseDist(arch: string, platform: string, libc = ''): string {
 
 async function linkInstance(
   dsn: string,
+  password: string | null,
   instanceName: string | null,
   projectDir: string | null,
   verboseLoggingEnabled: boolean
@@ -349,7 +362,6 @@ async function linkInstance(
   instanceName = instanceName || generateInstanceName()
 
   const cli = 'gel'
-  const options = getExecOptions({ verboseLoggingEnabled })
 
   const instanceLinkCmdLine = [
     'instance',
@@ -357,9 +369,18 @@ async function linkInstance(
     '--non-interactive',
     '--trust-tls-cert',
     '--dsn',
-    dsn,
-    instanceName
+    dsn
   ]
+  if (password !== null) {
+    instanceLinkCmdLine.push('--password-from-stdin')
+  }
+  instanceLinkCmdLine.push(instanceName)
+
+  const options = getExecOptions({
+    verboseLoggingEnabled,
+    input: password !== null ? Buffer.from(`${password}\n`) : undefined
+  })
+
   const instanceLinkStepStartTime = Date.now()
   core.info(`Starting instance link for '${instanceName}'...`)
   core.debug(`Running ${cli} ${instanceLinkCmdLine.join(' ')}`)
