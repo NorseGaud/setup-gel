@@ -39713,6 +39713,13 @@ async function run$1() {
     if (serverDsn === '' || serverDsn === 'false' || serverDsn === 'none') {
         serverDsn = null;
     }
+    let serverPassword = coreExports.getInput('server-password');
+    if (serverPassword === '') {
+        serverPassword = null;
+    }
+    if (serverPassword !== null) {
+        coreExports.setSecret(serverPassword);
+    }
     let instanceName = coreExports.getInput('instance-name');
     if (instanceName === '') {
         instanceName = null;
@@ -39725,7 +39732,7 @@ async function run$1() {
         const cliPath = await installCLI$1(cliVersion);
         if (serverDsn) {
             coreExports.addPath(cliPath);
-            await linkInstance(serverDsn, instanceName, projectDir, verboseLoggingEnabled);
+            await linkInstance(serverDsn, serverPassword, instanceName, projectDir, verboseLoggingEnabled);
         }
         else if (serverVersion) {
             const serverPath = await installServer$1(serverVersion, cliPath, verboseLoggingEnabled);
@@ -39765,10 +39772,11 @@ function logOutputChunk(outputChunk, verboseLoggingEnabled, verboseLogger) {
         }
     }
 }
-function getExecOptions({ verboseLoggingEnabled, env, captureStdout, captureStderr }) {
+function getExecOptions({ verboseLoggingEnabled, env, input, captureStdout, captureStderr }) {
     return {
         silent: true,
         env,
+        input,
         listeners: {
             stdout: (data) => {
                 const outputChunk = data.toString();
@@ -39931,19 +39939,25 @@ function getBaseDist$1(arch, platform, libc = '') {
     }
     return `${distArch}-${distPlatform}`;
 }
-async function linkInstance(dsn, instanceName, projectDir, verboseLoggingEnabled) {
+async function linkInstance(dsn, password, instanceName, projectDir, verboseLoggingEnabled) {
     instanceName = instanceName || generateInstanceName();
     const cli = 'gel';
-    const options = getExecOptions({ verboseLoggingEnabled });
     const instanceLinkCmdLine = [
         'instance',
         'link',
         '--non-interactive',
         '--trust-tls-cert',
         '--dsn',
-        dsn,
-        instanceName
+        dsn
     ];
+    if (password !== null) {
+        instanceLinkCmdLine.push('--password-from-stdin');
+    }
+    instanceLinkCmdLine.push(instanceName);
+    const options = getExecOptions({
+        verboseLoggingEnabled,
+        input: password !== null ? Buffer.from(`${password}\n`) : undefined
+    });
     const instanceLinkStepStartTime = Date.now();
     coreExports.info(`Starting instance link for '${instanceName}'...`);
     coreExports.debug(`Running ${cli} ${instanceLinkCmdLine.join(' ')}`);
